@@ -13,7 +13,8 @@ def home():
     return "24/7 Discord Anchor is Online & Secure!"
 
 def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
+    # Render assigns its port via PORT environment variable (defaulting to 10000)
+    port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
 server_thread = threading.Thread(target=run_web_server)
@@ -26,30 +27,32 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 
 intents = discord.Intents.default()
-intents.message_content = True  # Required for prefix commands to read text messages
+intents.message_content = True  # Required for prefix commands
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
 async def ensure_voice_connection():
-    """Helper function to cleanly connect or reconnect to the target voice channel."""
+    """Cleanly connects to the voice channel if not already connected."""
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
-        print("Channel ID not found! Check your CHANNEL_ID environment variable.")
+        print(f"Channel ID {CHANNEL_ID} not found!")
         return
 
-    # Clean up existing active voice clients first to prevent duplicate session errors
+    # Check if we are already connected to the target channel
     for vc in bot.voice_clients:
+        if vc.channel.id == CHANNEL_ID and vc.is_connected():
+            return  # Already connected cleanly, do nothing
         try:
             await vc.disconnect(force=True)
         except Exception as e:
-            print(f"Error disconnecting existing client: {e}")
+            print(f"Cleanup error: {e}")
 
     try:
-        await channel.connect(reconnect=True)
-        print(f"Connected to voice channel: {channel.name}")
+        await channel.connect(reconnect=True, timeout=30.0)
+        print(f"Successfully connected to voice channel: {channel.name}")
     except Exception as e:
-        print(f"Connection failed: {e}")
+        print(f"Voice connection failed: {e}")
 
 
 @bot.event
@@ -60,40 +63,35 @@ async def on_ready():
 
 @bot.event
 async def on_voice_state_update(member, before, after):
-    """
-    AUTO-REJOIN GUARDRAILS:
-    Triggers whenever ANY user or bot changes voice states in the server.
-    """
-    if member.id == bot.user.id:
-        # Case 1: Bot was disconnected or moved away from the target channel
-        if after.channel is None or after.channel.id != CHANNEL_ID:
-            print("Bot disconnected or moved! Returning to target channel...")
-            await ensure_voice_connection()
+    """Only triggers when the BOT ITSELF is moved or disconnected by a user."""
+    if member.id != bot.user.id:
+        return
+
+    # Case: Bot was disconnected or moved away from the target channel
+    if after.channel is None or after.channel.id != CHANNEL_ID:
+        print("Bot was disconnected or moved! Rejoining target channel...")
+        await ensure_voice_connection()
 
 
 # --- STEP C: Lightweight Commands ---
 
 @bot.command(name="ping")
 async def ping(ctx):
-    """Responds with the bot's current ping/latency."""
     latency = round(bot.latency * 1000)
     await ctx.send(f"Pong! 🏓 Latency: `{latency}ms`")
 
 @bot.command(name="coin")
 async def coin(ctx):
-    """Flips a coin."""
     result = random.choice(["Heads 🪙", "Tails 🪙"])
     await ctx.send(f"Flipped a coin: **{result}**!")
 
 @bot.command(name="roll")
 async def roll(ctx):
-    """Rolls a 6-sided die."""
     number = random.randint(1, 6)
     await ctx.send(f"🎲 You rolled a **{number}**!")
 
 @bot.command(name="anchor")
 async def anchor(ctx):
-    """Displays a random status line for the VC anchor."""
     responses = [
         "⚓ **VC Anchor Status:** Holding down the voice channel 24/7!",
         "⚓ **VC Anchor Status:** Still here! The streak is safe.",
