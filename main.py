@@ -27,42 +27,50 @@ CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+
+async def ensure_voice_connection():
+    """Helper function to cleanly connect or reconnect to the voice channel."""
+    channel = bot.get_channel(CHANNEL_ID)
+    if not channel:
+        print("Channel ID not found!")
+        return
+
+    # Clean up existing active voice clients first
+    for vc in bot.voice_clients:
+        try:
+            await vc.disconnect(force=True)
+        except Exception as e:
+            print(f"Error disconnecting existing client: {e}")
+
+    try:
+        await channel.connect(reconnect=True)
+        print(f"Connected to voice channel: {channel.name}")
+    except Exception as e:
+        print(f"Connection failed: {e}")
+
+
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
-    channel = bot.get_channel(CHANNEL_ID)
-    if channel:
-        try:
-            await channel.connect(reconnect=True)
-            print(f"Connected to target voice channel: {channel.name}")
-        except Exception as e:
-            print(f"Connection failed: {e}")
+    await ensure_voice_connection()
+
 
 @bot.event
 async def on_voice_state_update(member, before, after):
     """
-    SECURITY & RECONNECT GUARDRAILS:
-    1. If disconnected, rejoin target channel automatically.
-    2. If moved to another channel, return to target channel automatically.
+    AUTO-REJOIN GUARDRAILS:
+    Triggers whenever ANY user or bot changes voice states in the server.
     """
     if member.id == bot.user.id:
-        # Case 1: Bot was kicked/disconnected from VC
+        # Case 1: Bot was manually kicked/disconnected from VC
         if after.channel is None:
             print("Bot was disconnected! Rejoining target channel...")
-            channel = bot.get_channel(CHANNEL_ID)
-            if channel:
-                try:
-                    await channel.connect(reconnect=True)
-                except Exception as e:
-                    print(f"Failed to rejoin: {e}")
-        
-        # Case 2: Someone moved the bot to another voice channel
+            await ensure_voice_connection()
+
+        # Case 2: Bot was dragged/moved to a different channel
         elif after.channel.id != CHANNEL_ID:
-            print("Bot was moved to another channel! Returning to target channel...")
-            target_channel = bot.get_channel(CHANNEL_ID)
-            if target_channel:
-                for vc in bot.voice_clients:
-                    await vc.disconnect()
-                await target_channel.connect(reconnect=True)
+            print("Bot was moved! Returning to target channel...")
+            await ensure_voice_connection()
+
 
 bot.run(TOKEN)
